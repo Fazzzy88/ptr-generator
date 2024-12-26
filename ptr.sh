@@ -1,6 +1,6 @@
 #!/bin/bash
 read -p "PTR: " file
-read -p "A: "file_2
+read -p "A: " file_2
 read -p "domain name: " dn
 read -p "shablon seti (172.16): " subnet
 {
