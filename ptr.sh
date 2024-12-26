@@ -7,10 +7,14 @@ if [ ! -f /etc/named.conf ]; then
 fi
 
 # Читаем зоны из файла конфигурации
-zones=()
+declare -A zones
 while IFS= read -r line; do
     if [[ $line =~ zone\ \"([0-9\.]+)\.in-addr\.arpa\" ]]; then
-        zones+=("${BASH_REMATCH[1]}")
+        zone_name="${BASH_REMATCH[1]}"
+        if [[ $line =~ file\ \"([^\"]+)\" ]]; then
+            file_name="${BASH_REMATCH[1]}"
+            zones["$zone_name"]="$file_name"
+        fi
     fi
 done < /etc/named.conf
 
@@ -30,21 +34,11 @@ if [ ! -f "/var/named/$a_record_file" ]; then
 fi
 
 # Копируем первые 8 строк из файла с A-записями в новый файл PTR-записей
-for zone in "${zones[@]}"; do
-    ptr_file="/var/named/${zone}ptr.db"
-    
+for zone in "${!zones[@]}"; do
+    ptr_file="/var/named/${zones[$zone]}"
+
     # Копируем первые 8 строк
     head -n 8 "/var/named/$a_record_file" > "$ptr_file"
-    
-    # Добавляем PTR-записи
-    echo "\$TTL 86400" >> "$ptr_file"
-    echo "@ IN SOA ns.example.com. admin.example.com. (" >> "$ptr_file"
-    echo "   $(date +%Y%m%d) ; serial" >> "$ptr_file"
-    echo "   3600       ; refresh" >> "$ptr_file"
-    echo "   1800       ; retry" >> "$ptr_file"
-    echo "   604800     ; expire" >> "$ptr_file"
-    echo "   86400 )    ; minimum" >> "$ptr_file"
-    echo "" >> "$ptr_file"
 
     # Генерация PTR-записей
     while IFS= read -r line; do
@@ -55,7 +49,7 @@ for zone in "${zones[@]}"; do
             echo "${i4}.${i3}.${i2}.${i1}.in-addr.arpa. IN PTR $domain." >> "$ptr_file"
         fi
     done < "/var/named/$a_record_file"
-    
+
     echo "Файл $ptr_file создан."
 done
 
