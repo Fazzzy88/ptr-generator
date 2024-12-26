@@ -1,50 +1,62 @@
 #!/bin/bash
 
-# Проверьте, что файл конфигурации передан в качестве аргумента
-if [ "$#" -ne 1 ]; then
-    echo "Использование: $0 <файл_конфигурации>"
+# Проверяем, что файл конфигурации существует
+if [ ! -f /etc/named.conf ]; then
+    echo "Файл /etc/named.conf не найден."
     exit 1
 fi
 
-config_file="$1"
-declare -A ptr_records
+# Читаем зоны из файла конфигурации
+zones=()
+while IFS= read -r line; do
+    if [[ $line =~ zone\ \"([0-9\.]+)\.in-addr\.arpa\" ]]; then
+        zones+=("${BASH_REMATCH[1]}")
+    fi
+done < /etc/named.conf
 
-# Читаем файл конфигурации и извлекаем A-записи
-while read -r line; do
-    # Игнорируем пустые строки и комментарии
-    [[ -z "$line" || "$line" =~ ^# ]] && continue
-    # Предполагаем, что формат "доменное_имя A ip_address"
-    domain=$(echo "$line" | awk '{print $1}')
-    ip=$(echo "$line" | awk '{print $3}')
+# Проверяем, найдены ли зоны
+if [ ${#zones[@]} -eq 0 ]; then
+    echo "Зоны не найдены в /etc/named.conf."
+    exit 1
+fi
+
+# Запрашиваем у пользователя имя файла с A-записями
+read -p "Введите имя файла с A-записями (например, abcd.db): " a_record_file
+
+# Проверяем, существует ли файл с A-записями
+if [ ! -f "/var/named/$a_record_file" ]; then
+    echo "Файл /var/named/$a_record_file не найден."
+    exit 1
+fi
+
+# Копируем первые 8 строк из файла с A-записями в новый файл PTR-записей
+for zone in "${zones[@]}"; do
+    ptr_file="/var/named/${zone}ptr.db"
     
-    # Получаем часть с IP и рассчитываем PTR-формат
-    IFS='.' read -r i1 i2 i3 i4 <<< "$ip"
+    # Копируем первые 8 строк
+    head -n 8 "/var/named/$a_record_file" > "$ptr_file"
     
-    # Добавляем запись в массив для PTR
-    ptr_records["$i1.$i2.$i3"]+="$domain"
-done < "$config_file"
+    # Добавляем PTR-записи
+    echo "\$TTL 86400" >> "$ptr_file"
+    echo "@ IN SOA ns.example.com. admin.example.com. (" >> "$ptr_file"
+    echo "   $(date +%Y%m%d) ; serial" >> "$ptr_file"
+    echo "   3600       ; refresh" >> "$ptr_file"
+    echo "   1800       ; retry" >> "$ptr_file"
+    echo "   604800     ; expire" >> "$ptr_file"
+    echo "   86400 )    ; minimum" >> "$ptr_file"
+    echo "" >> "$ptr_file"
 
-# Создаем файлы конфигурации для каждой сети
-for network in "${!ptr_records[@]}"; do
-    # Генерация сетевых масок
-    for mask in 22 16; do
-        output_file="ptr_records_$network/$network/$mask.conf"
-        mkdir -p "$(dirname "$output_file")"
-        
-        # Генерация PTR-записей
-        echo "\$TTL 86400" > "$output_file"
-        echo "@ IN SOA ns.example.com. admin.example.com. (" >> "$output_file"
-        echo "   $(date +%Y%m%d) ; serial" >> "$output_file"
-        echo "   3600       ; refresh" >> "$output_file"
-        echo "   1800       ; retry" >> "$output_file"
-        echo "   604800     ; expire" >> "$output_file"
-        echo "   86400 )    ; minimum" >> "$output_file"
-        echo "" >> "$output_file"
-
-        for domain in ${ptr_records[$network]}; do
-            echo "${i4}.${i3}.${i2}.${i1}.in-addr.arpa. IN PTR $domain." >> "$output_file"
-        done
-    done
+    # Генерация PTR-записей
+    while IFS= read -r line; do
+        if [[ $line =~ ([0-9\.]+)\s+IN\s+A ]]; then
+            ip="${BASH_REMATCH[1]}"
+            IFS='.' read -r i1 i2 i3 i4 <<< "$ip"
+            domain=$(echo "$line" | awk '{print $1}')
+            echo "${i4}.${i3}.${i2}.${i1}.in-addr.arpa. IN PTR $domain." >> "$ptr_file"
+        fi
+    done < "/var/named/$a_record_file"
+    
+    echo "Файл $ptr_file создан."
 done
 
-echo "PTR записи созданы."
+echo "Все PTR-записи созданы."
