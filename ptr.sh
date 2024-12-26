@@ -13,7 +13,12 @@ while IFS= read -r line; do
         zone_name="${BASH_REMATCH[1]}"
         if [[ $line =~ file\ \"([^\"]+)\" ]]; then
             file_name="${BASH_REMATCH[1]}"
-            zones["$zone_name"]="$file_name"
+            # Проверяем, что имя файла заканчивается на .db
+            if [[ $file_name == *.db ]]; then
+                zones["$zone_name"]="$file_name"
+            else
+                echo "Имя файла зоны \"$file_name\" не соответствует формату *.db"
+            fi
         fi
     fi
 done < /etc/named.conf
